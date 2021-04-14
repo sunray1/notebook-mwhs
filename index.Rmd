@@ -1,0 +1,158 @@
+---
+title: Fish biodiversity in Marine World Heritage Sites
+date: "`r Sys.Date()`"
+author: Pieter Provoost
+output: (function(...) {
+  rmdformats::robobook(toc_depth = 4, pandoc_args = c("+RTS", "-K2000m", "-RTS"), ...) })
+editor_options: 
+  chunk_output_type: console
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = "docs") })  
+---
+
+This notebook explores fish diversity in Marine World Heritage Sites using OBIS data.
+
+## Fish species in WoRMS
+
+[todo]
+
+## Fish data in OBIS
+
+```{r message=FALSE, warning=FALSE}
+library(robis)
+library(knitr)
+
+if (!file.exists("checklist.Rdata")) {
+  cl <- checklist(dropped = "include")
+  cl <- cl %>%
+    mutate(species_fish = ifelse(superclass == "Pisces", species, NA)) %>%
+    mutate(species_vulnerable = ifelse(category %in% c("VU", "EN", "CR"), species, NA)) %>%
+    mutate(species_vulnerable_fish = ifelse(superclass == "Pisces" & category %in% c("VU", "EN", "CR"), species, NA))
+  save(cl, file = "checklist.Rdata")
+} else {
+  load("checklist.Rdata")
+}
+
+cl %>%
+  summarize(
+    records = sum(records),
+    species = length(unique(species)),
+    fish = length(unique(species_fish)),
+    vulnerable = length(unique(species_vulnerable)),
+    vulnerable_fish = length(unique(species_vulnerable_fish))
+  ) %>%
+  kable(format.args = list(big.mark = ","))
+```
+
+## Fish data for the Marine World Heritage Sites
+### Fetch spatial data
+
+First fetch the Marine World Heritage Sites shapefile from MarineRegions:
+
+```{r message=FALSE, warning=FALSE}
+library(sf)
+library(dplyr)
+
+if (!file.exists("shape/worldheritagemarineprogramme.shp")) {
+  download.file("http://geo.vliz.be/geoserver/wfs?request=getfeature&service=wfs&version=1.0.0&typename=MarineRegions:worldheritagemarineprogramme&outputformat=SHAPE-ZIP", "shape.zip")
+  unzip("shape.zip", exdir = "shape")
+}
+
+shapes <- st_read("shape/worldheritagemarineprogramme.shp") %>%
+  select(full_name, country, geometry) %>%
+  mutate(full_name = iconv(full_name, "latin1", "UTF-8"))
+```
+
+Let's create a map.
+
+```{r message=FALSE, warning=FALSE}
+library(mapview)
+mapviewOptions(fgb = FALSE)
+
+mapview(shapes)@map
+```
+
+### Process spatial data
+
+```{r message=FALSE, warning=FALSE}
+library(concaveman)
+library(sfheaders)
+
+shapes_processed <- shapes %>%
+  mutate(geometry = sf_remove_holes(geometry)) %>%
+  group_by(full_name) %>%
+  summarize(geometry = st_union(geometry))
+
+mapview(shapes, color = "red", lwd = 0.5, alpha = 1, alpha.regions = 0) +
+  mapview(shapes_processed, color = "green", lwd = 0.5, alpha = 1, alpha.regions = 0, legend = FALSE)
+```
+
+### Fetch occurrence data
+
+Here I'm fetching data from OBIS by area. OBIS is queried by bounding box, but a point-in-polygon calculation is used to discard points outside the areas.
+
+```{r message=FALSE, warning=FALSE}
+library(purrr)
+
+occ_for_geom <- function(geom) {
+  wkt <- st_as_text(st_as_sfc(st_bbox(geom)), digits = 6)
+  message(wkt)
+  occ <- occurrence(geometry = wkt, fields = c("scientificName", "species", "family", "order", "class", "superclass", "phylum", "decimalLongitude", "decimalLatitude", "date_year", "category", "dataset_id")) %>%
+    st_as_sf(coords = c("decimalLongitude", "decimalLatitude"), crs = 4326)
+  occ_filtered <- occ %>%
+    filter(st_intersects(geometry, geom, sparse = FALSE)) %>%
+    as_tibble() %>%
+    select(-geometry)
+  return(occ_filtered)
+}
+
+if (!file.exists("occurrence.Rdata")) {
+  occs <- map(shapes_processed$geometry, occ_for_geom)
+  for (i in 1:nrow(shapes_processed)) {
+    occs[[i]]$full_name <- shapes_processed$full_name[i]
+  }
+  occ <- bind_rows(occs)
+
+  occ <- occ %>%
+    mutate(species_fish = ifelse(superclass == "Pisces", species, NA)) %>%
+    mutate(species_vulnerable = ifelse(category %in% c("VU", "EN", "CR"), species, NA)) %>%
+    mutate(species_vulnerable_fish = ifelse(superclass == "Pisces" & category %in% c("VU", "EN", "CR"), species, NA))
+
+  save(occ, file = "occurrence.Rdata")
+} else {
+  load("occurrence.Rdata")
+}
+```
+
+### Calculate statistics
+
+```{r message=FALSE, warning=FALSE}
+occ %>%
+  filter(!is.na(species)) %>%
+  summarize(
+    records = n(),
+    species = length(unique(species)),
+    fish = length(unique(species_fish)),
+    vulnerable = length(unique(species_vulnerable)),
+    vulnerable_fish = length(unique(species_vulnerable_fish))
+  ) %>%
+  kable(format.args = list(big.mark = ","))
+```
+
+```{r message=FALSE, warning=FALSE}
+occ %>%
+  filter(!is.na(species)) %>%
+  group_by(full_name) %>%
+  summarize(
+    records = n(),
+    species = length(unique(species)),
+    fish = length(unique(species_fish)),
+    vulnerables = length(unique(species_vulnerable)),
+    vulnerable_fish = length(unique(species_vulnerable_fish))
+  ) %>%
+  kable(format.args = list(big.mark = ","))
+```
+
+## Fish DNA barcodes in molecular databases
+
+[todo]
