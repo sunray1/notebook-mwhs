@@ -5,4 +5,5 @@ output
 *.Rdata
 shape
 shape.zip
+worms.txt
 

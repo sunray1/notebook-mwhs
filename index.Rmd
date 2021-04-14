@@ -14,7 +14,61 @@ This notebook explores fish diversity in Marine World Heritage Sites using OBIS 
 
 ## Fish species in WoRMS
 
-[todo]
+First read all WoRMS species. As it's not possible to get a full species list from the WoRMS or GBIF web services, I'm reading directly from an export provided by WoRMS.
+
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+
+worms <- read.csv("worms.txt", sep = "\t", quote = "") %>%
+  as_tibble() %>%
+  filter(taxonRank == "Species" & taxonomicStatus == "accepted") %>%
+  select(scientificName, phylum, class, order) %>%
+  mutate(species_fish = ifelse(class %in% c("Actinopterygii", "Coelacanthi", "Elasmobranchii", "Holocephali"), scientificName, NA))
+```
+
+Here I'm using the `rredlist` package to get all Red List species from IUCN:
+
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+library(rredlist)
+
+redlist <- tibble()
+page <- 0
+
+while (TRUE) {
+  res <- rl_sp(page, key = "a936c4f78881e79a326e73c4f97f34a6e7d8f9f9e84342bff73c3ceda14992b9")$result
+  if (length(res) == 0) {
+    break
+  }
+  redlist <- bind_rows(redlist, res)
+  page <- page + 1
+}
+
+redlist <- redlist %>%
+  as_tibble() %>%
+  filter(category %in% c("CR", "EN", "VU", "EW", "EX"))
+```
+
+Now let's label Red List species in the `worms` data frame.
+
+```{r message=FALSE, warning=FALSE}
+worms <- worms %>%
+  mutate(species_vulnerable = ifelse(scientificName %in% redlist$scientific_name, scientificName, NA)) %>%
+  mutate(species_vulnerable_fish = ifelse(!is.na(species_fish) & scientificName %in% redlist$scientific_name, scientificName, NA)) 
+```
+
+And calculate some statistics:
+
+```{r message=FALSE, warning=FALSE}
+worms %>%
+  summarize(
+    species = n(),
+    fish = length(unique(species_fish)),
+    vulnerable = length(unique(species_vulnerable)),
+    vulnerable_fish = length(unique(species_vulnerable_fish))
+  ) %>%
+  kable(format.args = list(big.mark = ","))
+```
 
 ## Fish data in OBIS
 
@@ -25,6 +79,7 @@ library(knitr)
 if (!file.exists("checklist.Rdata")) {
   cl <- checklist(dropped = "include")
   cl <- cl %>%
+    filter(is_marine | is_brackish) %>%
     mutate(species_fish = ifelse(superclass == "Pisces", species, NA)) %>%
     mutate(species_vulnerable = ifelse(category %in% c("VU", "EN", "CR"), species, NA)) %>%
     mutate(species_vulnerable_fish = ifelse(superclass == "Pisces" & category %in% c("VU", "EN", "CR"), species, NA))
