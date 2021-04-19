@@ -60,6 +60,8 @@ worms <- worms %>%
 And calculate some statistics:
 
 ```{r message=FALSE, warning=FALSE}
+library(knitr)
+
 worms %>%
   summarize(
     species = n(),
@@ -74,7 +76,6 @@ worms %>%
 
 ```{r message=FALSE, warning=FALSE}
 library(robis)
-library(knitr)
 
 if (!file.exists("checklist.Rdata")) {
   cl <- checklist(dropped = "include")
@@ -195,19 +196,88 @@ occ %>%
 ```
 
 ```{r message=FALSE, warning=FALSE}
-occ %>%
+site_stats <- occ %>%
   filter(!is.na(species)) %>%
   group_by(full_name) %>%
   summarize(
     records = n(),
     species = length(unique(species)),
     fish = length(unique(species_fish)),
-    vulnerables = length(unique(species_vulnerable)),
+    vulnerable = length(unique(species_vulnerable)),
     vulnerable_fish = length(unique(species_vulnerable_fish))
-  ) %>%
+  )
+
+site_stats %>%
   kable(format.args = list(big.mark = ","))
+```
+
+```{r message=FALSE, warning=FALSE}
+library(ggplot2)
+library(ftplottools)
+library(ggrepel)
+
+subset <- site_stats %>%
+  filter(full_name %in% c("Great Barrier Reef", "Belize Barrier Reef Reserve System", "Ha Long Bay", "The Wadden Sea", "Heard and McDonald Islands", "Aldabra Atoll")) %>%
+  arrange(full_name)
+
+subset$x <- c(600, 100, 800, 500, 10, 60)
+subset$y <- c(140, 80, 210, 3, 20, 40)
+
+ggplot() +
+  geom_segment(subset, mapping = aes(x = x, y = y, xend = fish, yend = vulnerable)) +
+  geom_label(subset, mapping = aes(x = x, y = y, label = full_name), size = 3.5, label.size = 0) +
+  geom_point(site_stats, mapping = aes(x = fish, y = vulnerable, size = species, color = species), shape = 21, stroke = 1.2, fill = "white") +
+  scale_x_continuous(trans = "log10") +
+  scale_y_continuous(trans = "log10") +
+  scale_size(range = c(1, 8), breaks = c(1000, 5000, 10000)) +
+  scale_color_viridis_c(end = 0.8, trans = "log10", breaks = c(1000, 5000, 10000)) +
+  guides(color = guide_legend(), size = guide_legend()) +
+  xlab("fish species") + ylab("vulnerable species") +
+  ft_theme() +
+  ggtitle("Fish and vulnerable species diversity at marine World Heritate sites")
+
+ggsave("sites.png", width = 10, height = 6, dpi = 600)
 ```
 
 ## Fish DNA barcodes in molecular databases
 
-[todo]
+Let's check BOLD for barcode sequences using all fish species in WoRMS:
+
+```{r message=FALSE, warning=FALSE}
+# fixes issue with bold package
+invisible(Sys.setlocale("LC_ALL", "C"))
+
+if (!file.exists("bold.Rdata")) {
+  fish_species <- worms %>% filter(!is.na(species_fish)) %>% pull(species_fish) %>% unique()
+  bold_list <- sapply(fish_species, function(x) NULL)
+  for (i in 1:length(bold_list)) {
+    message(i, " ", names(bold_list)[i])
+    if (is.null(bold_list[[i]])) {
+      bold_list[[i]] <- tryCatch({
+        caspr::bold_statistics(names(bold_list)[i])
+      }, warning = function(warning_condition) {
+      }, error = function(error_condition) {
+      }, finally = {
+      })
+    }
+  }
+  save(bold_list, file = "bold.Rdata")
+} else {
+  load("bold.Rdata")
+}
+
+sequence_numbers <- unlist(map(bold_list, nrow))
+fish_sequences <- tibble(species = names(sequence_numbers), sequences = sequence_numbers) %>%
+  filter(sequences > 0)
+```
+
+This tells us that barcode sequences exist in BOLD for `r format(nrow(fish_sequences), big.mark = ",")` WoRMS fish species.
+
+Now we can check how many fish species reported in the marine World Heritage sites have barcodes in BOLD:
+
+```{r message=FALSE, warning=FALSE}
+occ %>%
+  filter(species %in% fish_sequences$species) %>%
+  summarize(species = length(unique(species))) %>%
+  kable(format.args = list(big.mark = ","))
+```
