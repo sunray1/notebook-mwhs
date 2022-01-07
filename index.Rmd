@@ -1,5 +1,5 @@
 ---
-title: Fish biodiversity in Marine World Heritage Sites
+title: Diversity of fish, vulnerable species, and species of Outstanding Universal Value in Marine World Heritage Sites
 date: "`r Sys.Date()`"
 author: Pieter Provoost
 output: (function(...) {
@@ -10,236 +10,96 @@ knit: (function(inputFile, encoding) {
   rmarkdown::render(inputFile, encoding = encoding, output_dir = "docs") })  
 ---
 
-This notebook explores fish diversity in Marine World Heritage Sites using OBIS data.
+This notebook explores species diversity in Marine World Heritage Sites using OBIS data. This is work in progress.
 
-## Fish species in WoRMS
+## How to use this notebook
 
-First read all WoRMS species. As it's not possible to get a full species list from the WoRMS or GBIF web services, I'm reading directly from an export provided by WoRMS.
+Optionally remove the following cache files before running the notebook:
+
+- `occurrence.Rdata`: occurrences by site
+- `bold.Rdata`: statistics on barcode sequences in BOLD for all fish species
+
+If necessary, adjust fish taxonomy below:
+
+```{r message=FALSE, warning=FALSE}
+fish_classes <- c("Actinopteri", "Cephalaspidomorphi", "Myxini", "Petromyzonti", "Elasmobranchii", "Holocephali", "Coelacanthi")
+fish_orders <- c("Cetomimiformes", "Gasterosteiformes", "Scorpaeniformes", "Stephanoberyciformes")
+```
+
+## Other resources
+
+A separate repository has been set up for compiling species list based on existing publications, see https://github.com/iobis/mwhs-species-lists.
+
+## Dependencies
 
 ```{r message=FALSE, warning=FALSE}
 library(dplyr)
+library(caspr)
+library(rredlist)
+library(knitr)
+library(ggplot2)
+library(sf)
+library(mapview)
+library(concaveman)
+library(sfheaders)
+library(purrr)
+library(robis)
+library(stringr)
+library(ftplottools)
+library(ggrepel)
+```
 
-worms <- read.csv("worms.txt", sep = "\t", quote = "") %>%
+## Compiling a list of all WoRMS species including IUCN Red List category and BOLD barcode statistics
+
+First read all accepted WoRMS species. As it's not possible to get a full species list from the WoRMS or GBIF web services, I'm reading directly from an export provided by the WoRMS team. The list of fish classes and orders above is used to determine if species are fish or not. 
+
+```{r message=FALSE, warning=FALSE}
+worms <- read.csv("data/taxon.txt", sep = "\t", quote = "") %>%
   as_tibble() %>%
   filter(taxonRank == "Species" & taxonomicStatus == "accepted") %>%
-  select(scientificName, phylum, class, order) %>%
-  mutate(species_fish = ifelse(class %in% c("Actinopterygii", "Coelacanthi", "Elasmobranchii", "Holocephali"), scientificName, NA))
+  select(taxonID, scientificName, phylum, class, order) %>%
+  distinct() %>%
+  mutate(is_fish = class %in% fish_classes | order %in% fish_orders) %>%
+  mutate(aphiaID = as.integer(str_replace(taxonID, "urn:lsid:marinespecies.org:taxname:", "")))
 ```
 
-Here I'm using the `rredlist` package to get all Red List species from IUCN:
+### Assign Red List categories
+
+Here I'm using the `rredlist` package to get all Red List species from IUCN. Only the extinct and threatened categories are kept: `CR`, `EN`, `VU`, `EW`, `EX`.
 
 ```{r message=FALSE, warning=FALSE}
-library(dplyr)
-library(rredlist)
-
-redlist <- tibble()
-page <- 0
-
-while (TRUE) {
-  res <- rl_sp(page, key = "a936c4f78881e79a326e73c4f97f34a6e7d8f9f9e84342bff73c3ceda14992b9")$result
-  if (length(res) == 0) {
-    break
+get_redlist_species <- function() {
+  redlist <- tibble()
+  page <- 0
+  while (TRUE) {
+    res <- rl_sp(page, key = "a936c4f78881e79a326e73c4f97f34a6e7d8f9f9e84342bff73c3ceda14992b9")$result
+    if (length(res) == 0) {
+      break
+    }
+    redlist <- bind_rows(redlist, res)
+    page <- page + 1
   }
-  redlist <- bind_rows(redlist, res)
-  page <- page + 1
+  redlist <- redlist %>%
+    as_tibble() %>%
+    filter(category %in% c("CR", "EN", "VU", "EW", "EX")) %>%
+    mutate(category = factor(category, levels = c("EX", "EW", "CR", "EN", "VU"))) %>%
+    group_by(scientific_name) %>%
+    filter(row_number() == 1) %>%
+    ungroup()
+  return(redlist)  
 }
 
-redlist <- redlist %>%
-  as_tibble() %>%
-  filter(category %in% c("CR", "EN", "VU", "EW", "EX"))
+redlist <- get_redlist_species()
 ```
 
-Now let's label Red List species in the `worms` data frame.
+Now we can label Red List species in the `worms` data frame.
 
 ```{r message=FALSE, warning=FALSE}
 worms <- worms %>%
-  mutate(species_vulnerable = ifelse(scientificName %in% redlist$scientific_name, scientificName, NA)) %>%
-  mutate(species_vulnerable_fish = ifelse(!is.na(species_fish) & scientificName %in% redlist$scientific_name, scientificName, NA)) 
+  left_join(redlist %>% select(scientific_name, category), by = c("scientificName" = "scientific_name"))
 ```
 
-And calculate some statistics:
-
-```{r message=FALSE, warning=FALSE}
-library(knitr)
-
-worms %>%
-  summarize(
-    species = n(),
-    fish = length(unique(species_fish)),
-    vulnerable = length(unique(species_vulnerable)),
-    vulnerable_fish = length(unique(species_vulnerable_fish))
-  ) %>%
-  kable(format.args = list(big.mark = ","))
-```
-
-## Fish data in OBIS
-
-```{r message=FALSE, warning=FALSE}
-library(robis)
-
-if (!file.exists("checklist.Rdata")) {
-  cl <- checklist(dropped = "include")
-  cl <- cl %>%
-    filter(is_marine | is_brackish) %>%
-    mutate(species_fish = ifelse(superclass == "Pisces", species, NA)) %>%
-    mutate(species_vulnerable = ifelse(category %in% c("VU", "EN", "CR"), species, NA)) %>%
-    mutate(species_vulnerable_fish = ifelse(superclass == "Pisces" & category %in% c("VU", "EN", "CR"), species, NA))
-  save(cl, file = "checklist.Rdata")
-} else {
-  load("checklist.Rdata")
-}
-
-cl %>%
-  summarize(
-    records = sum(records),
-    species = length(unique(species)),
-    fish = length(unique(species_fish)),
-    vulnerable = length(unique(species_vulnerable)),
-    vulnerable_fish = length(unique(species_vulnerable_fish))
-  ) %>%
-  kable(format.args = list(big.mark = ","))
-```
-
-## Fish data for the Marine World Heritage Sites
-### Fetch spatial data
-
-First fetch the Marine World Heritage Sites shapefile from MarineRegions:
-
-```{r message=FALSE, warning=FALSE}
-library(sf)
-library(dplyr)
-
-if (!file.exists("shape/worldheritagemarineprogramme.shp")) {
-  download.file("http://geo.vliz.be/geoserver/wfs?request=getfeature&service=wfs&version=1.0.0&typename=MarineRegions:worldheritagemarineprogramme&outputformat=SHAPE-ZIP", "shape.zip")
-  unzip("shape.zip", exdir = "shape")
-}
-
-shapes <- st_read("shape/worldheritagemarineprogramme.shp") %>%
-  select(full_name, country, geometry) %>%
-  mutate(full_name = iconv(full_name, "latin1", "UTF-8"))
-```
-
-Let's create a map.
-
-```{r message=FALSE, warning=FALSE}
-library(mapview)
-mapviewOptions(fgb = FALSE)
-
-mapview(shapes)@map
-```
-
-### Process spatial data
-
-```{r message=FALSE, warning=FALSE}
-library(concaveman)
-library(sfheaders)
-
-shapes_processed <- shapes %>%
-  mutate(geometry = sf_remove_holes(geometry)) %>%
-  group_by(full_name) %>%
-  summarize(geometry = st_union(geometry))
-
-mapview(shapes, color = "red", lwd = 0.5, alpha = 1, alpha.regions = 0) +
-  mapview(shapes_processed, color = "green", lwd = 0.5, alpha = 1, alpha.regions = 0, legend = FALSE)
-```
-
-### Fetch occurrence data
-
-Here I'm fetching data from OBIS by area. OBIS is queried by bounding box, but a point-in-polygon calculation is used to discard points outside the areas.
-
-```{r message=FALSE, warning=FALSE}
-library(purrr)
-
-occ_for_geom <- function(geom) {
-  wkt <- st_as_text(st_as_sfc(st_bbox(geom)), digits = 6)
-  message(wkt)
-  occ <- occurrence(geometry = wkt, fields = c("scientificName", "species", "family", "order", "class", "superclass", "phylum", "decimalLongitude", "decimalLatitude", "date_year", "category", "dataset_id")) %>%
-    st_as_sf(coords = c("decimalLongitude", "decimalLatitude"), crs = 4326)
-  occ_filtered <- occ %>%
-    filter(st_intersects(geometry, geom, sparse = FALSE)) %>%
-    as_tibble() %>%
-    select(-geometry)
-  return(occ_filtered)
-}
-
-if (!file.exists("occurrence.Rdata")) {
-  occs <- map(shapes_processed$geometry, occ_for_geom)
-  for (i in 1:nrow(shapes_processed)) {
-    occs[[i]]$full_name <- shapes_processed$full_name[i]
-  }
-  occ <- bind_rows(occs)
-
-  occ <- occ %>%
-    mutate(species_fish = ifelse(superclass == "Pisces", species, NA)) %>%
-    mutate(species_vulnerable = ifelse(category %in% c("VU", "EN", "CR"), species, NA)) %>%
-    mutate(species_vulnerable_fish = ifelse(superclass == "Pisces" & category %in% c("VU", "EN", "CR"), species, NA))
-
-  save(occ, file = "occurrence.Rdata")
-} else {
-  load("occurrence.Rdata")
-}
-```
-
-### Calculate statistics
-
-```{r message=FALSE, warning=FALSE}
-occ %>%
-  filter(!is.na(species)) %>%
-  summarize(
-    records = n(),
-    species = length(unique(species)),
-    fish = length(unique(species_fish)),
-    vulnerable = length(unique(species_vulnerable)),
-    vulnerable_fish = length(unique(species_vulnerable_fish))
-  ) %>%
-  kable(format.args = list(big.mark = ","))
-```
-
-```{r message=FALSE, warning=FALSE}
-site_stats <- occ %>%
-  filter(!is.na(species)) %>%
-  group_by(full_name) %>%
-  summarize(
-    records = n(),
-    species = length(unique(species)),
-    fish = length(unique(species_fish)),
-    vulnerable = length(unique(species_vulnerable)),
-    vulnerable_fish = length(unique(species_vulnerable_fish))
-  )
-
-site_stats %>%
-  kable(format.args = list(big.mark = ","))
-```
-
-```{r message=FALSE, warning=FALSE}
-library(ggplot2)
-library(ftplottools)
-library(ggrepel)
-
-subset <- site_stats %>%
-  filter(full_name %in% c("Great Barrier Reef", "Belize Barrier Reef Reserve System", "Ha Long Bay", "The Wadden Sea", "Heard and McDonald Islands", "Aldabra Atoll")) %>%
-  arrange(full_name)
-
-subset$x <- c(600, 100, 800, 500, 10, 60)
-subset$y <- c(140, 80, 210, 3, 20, 40)
-
-ggplot() +
-  geom_segment(subset, mapping = aes(x = x, y = y, xend = fish, yend = vulnerable)) +
-  geom_label(subset, mapping = aes(x = x, y = y, label = full_name), size = 3.5, label.size = 0) +
-  geom_point(site_stats, mapping = aes(x = fish, y = vulnerable, size = species, color = species), shape = 21, stroke = 1.2, fill = "white") +
-  scale_x_continuous(trans = "log10") +
-  scale_y_continuous(trans = "log10") +
-  scale_size(range = c(1, 8), breaks = c(1000, 5000, 10000)) +
-  scale_color_viridis_c(end = 0.8, trans = "log10", breaks = c(1000, 5000, 10000)) +
-  guides(color = guide_legend(), size = guide_legend()) +
-  xlab("fish species") + ylab("vulnerable species") +
-  ft_theme() +
-  ggtitle("Fish and vulnerable species diversity at marine World Heritate sites")
-
-ggsave("sites.png", width = 10, height = 6, dpi = 600)
-```
-
-## Fish DNA barcodes in molecular databases
+### Get BOLD barcode statistics for all fish species
 
 Let's check BOLD for barcode sequences using all fish species in WoRMS:
 
@@ -248,7 +108,7 @@ Let's check BOLD for barcode sequences using all fish species in WoRMS:
 invisible(Sys.setlocale("LC_ALL", "C"))
 
 if (!file.exists("bold.Rdata")) {
-  fish_species <- worms %>% filter(!is.na(species_fish)) %>% pull(species_fish) %>% unique()
+  fish_species <- worms %>% pull(scientificName) %>% unique()
   bold_list <- sapply(fish_species, function(x) NULL)
   for (i in 1:length(bold_list)) {
     message(i, " ", names(bold_list)[i])
@@ -269,15 +129,167 @@ if (!file.exists("bold.Rdata")) {
 sequence_numbers <- unlist(map(bold_list, nrow))
 fish_sequences <- tibble(species = names(sequence_numbers), sequences = sequence_numbers) %>%
   filter(sequences > 0)
+
+worms <- worms %>%
+  left_join(fish_sequences, by = c("scientificName" = "species"))
 ```
 
-This tells us that barcode sequences exist in BOLD for `r format(nrow(fish_sequences), big.mark = ",")` WoRMS fish species.
+### Statistics
 
-Now we can check how many fish species reported in the marine World Heritage sites have barcodes in BOLD:
+Now calculate some statistics:
+
+```{r message=FALSE, warning=FALSE}
+worms %>%
+  summarize(
+    species = n(),
+    fish = sum(is_fish),
+    vulnerable = length(na.omit(category)),
+    vulnerable_fish = sum(is_fish * !is.na(category)),
+    barcode_fish = sum(sequences > 0, na.rm = T)
+  ) %>%
+  kable(format.args = list(big.mark = ","))
+```
+
+Note that these numbers are slightly inflated due to homonyms, even after removing unaccepted names.
+
+```{r message=FALSE, warning=FALSE}
+ggplot(worms %>% filter(!is.na(category))) +
+  geom_bar(aes(x = phylum, fill = category)) +
+  coord_flip() +
+  scale_fill_viridis_d(direction = -1)
+```
+
+## Marine World Heritage Sites statistics
+
+In this section we will look at the diversity of fish and vulnerable species in each marine World Heritage site.
+
+### Fetch spatial data
+
+First fetch the Marine World Heritage Sites shapefile from MarineRegions:
+
+```{r message=FALSE, warning=FALSE}
+if (!file.exists("data/shape/worldheritagemarineprogramme.shp")) {
+  download.file("http://geo.vliz.be/geoserver/wfs?request=getfeature&service=wfs&version=1.0.0&typename=MarineRegions:worldheritagemarineprogramme&outputformat=SHAPE-ZIP", "data/shape.zip")
+  unzip("data/shape.zip", exdir = "shape")
+}
+
+shapes <- st_read("data/shape/worldheritagemarineprogramme.shp") %>%
+  select(full_name, country, geometry) %>%
+  mutate(full_name = iconv(full_name, "latin1", "UTF-8"))
+```
+
+Let's create a map.
+
+```{r message=FALSE, warning=FALSE}
+mapviewOptions(fgb = FALSE)
+mapview(shapes)@map
+```
+
+### Process spatial data
+
+Reduce the complexity of the spatial geometries by removing holes, then merge geometries by site.
+
+```{r message=FALSE, warning=FALSE}
+shapes_processed <- shapes %>%
+  mutate(geometry = st_make_valid(sf_remove_holes(geometry))) %>%
+  group_by(full_name) %>%
+  summarize(geometry = st_union(geometry))
+
+mapview(shapes, color = "red", lwd = 0.5, alpha = 1, alpha.regions = 0) +
+  mapview(shapes_processed, color = "green", lwd = 0.5, alpha = 1, alpha.regions = 0, legend = FALSE)
+```
+
+### Fetch occurrence data
+
+Now retrieve data from OBIS by area. OBIS is queried by bounding box, but a point-in-polygon calculation is used to discard points outside the areas.
+
+```{r message=FALSE, warning=FALSE}
+occ_for_geom <- function(geom) {
+  wkt <- st_as_text(st_as_sfc(st_bbox(geom)), digits = 6)
+  message(wkt)
+  occ <- occurrence(geometry = wkt, fields = c("decimalLongitude", "decimalLatitude", "date_year", "scientificName", "aphiaID", "dataset_id")) %>%
+    st_as_sf(coords = c("decimalLongitude", "decimalLatitude"), crs = 4326)
+  occ_filtered <- occ %>%
+    filter(st_intersects(geometry, geom, sparse = FALSE)) %>%
+    as_tibble() %>%
+    select(-geometry)
+  return(occ_filtered)
+}
+
+if (!file.exists("occurrence.Rdata")) {
+  occs <- map(shapes_processed$geometry, occ_for_geom)
+  for (i in 1:nrow(shapes_processed)) {
+    occs[[i]]$full_name <- shapes_processed$full_name[i]
+  }
+  occ <- bind_rows(occs)
+  save(occ, file = "occurrence.Rdata")
+} else {
+  load("occurrence.Rdata")
+}
+
+occ <- occ %>%
+  inner_join(worms %>% select(is_fish, aphiaID, category, sequences), by = "aphiaID") %>%
+  mutate(
+    aphia_fish = ifelse(is_fish == TRUE, aphiaID, NA),
+    aphia_vulnerable = ifelse(!is.na(category), aphiaID, NA),
+    aphia_vulnerable_fish = ifelse(is_fish == TRUE & !is.na(category), aphiaID, NA),
+    aphia_barcode_fish = ifelse(is_fish == TRUE & sequences > 0, aphiaID, NA),
+  ) 
+```
+
+### Calculate statistics
 
 ```{r message=FALSE, warning=FALSE}
 occ %>%
-  filter(species %in% fish_sequences$species) %>%
-  summarize(species = length(unique(species))) %>%
+  summarize(
+    records = n(),
+    species = length(unique(aphiaID)),
+    fish = length(unique(aphia_fish)),
+    vulnerable = length(unique(aphia_vulnerable)),
+    vulnerable_fish = length(unique(aphia_vulnerable_fish)),
+    barcode_fish =  length(unique(aphia_barcode_fish))
+  ) %>%
   kable(format.args = list(big.mark = ","))
+```
+
+```{r message=FALSE, warning=FALSE}
+site_stats <- occ %>%
+  group_by(full_name) %>%
+  summarize(
+    records = n(),
+    species = length(unique(aphiaID)),
+    fish = length(unique(aphia_fish)),
+    vulnerable = length(unique(aphia_vulnerable)),
+    vulnerable_fish = length(unique(aphia_vulnerable_fish)),
+    barcode_fish =  length(unique(aphia_barcode_fish))
+  )
+
+xlsx::write.xlsx(site_stats, file = "output/sites.xlsx")
+
+site_stats %>%
+  kable(format.args = list(big.mark = ","))
+```
+
+```{r message=FALSE, warning=FALSE}
+subset <- site_stats %>%
+  filter(full_name %in% c("Great Barrier Reef", "Belize Barrier Reef Reserve System", "Ha Long Bay", "The Wadden Sea", "Heard and McDonald Islands", "Aldabra Atoll")) %>%
+  arrange(full_name)
+
+subset$x <- c(600, 100, 800, 500, 10, 60)
+subset$y <- c(140, 80, 210, 3, 20, 40)
+
+ggplot() +
+  geom_segment(subset, mapping = aes(x = x, y = y, xend = fish, yend = vulnerable)) +
+  geom_label(subset, mapping = aes(x = x, y = y, label = full_name), size = 3.5, label.size = 0) +
+  geom_point(site_stats, mapping = aes(x = fish, y = vulnerable, size = species, color = species), shape = 21, stroke = 1.2, fill = "white") +
+  scale_x_continuous(trans = "log10") +
+  scale_y_continuous(trans = "log10") +
+  scale_size(range = c(1, 8), breaks = c(1000, 5000, 10000)) +
+  scale_color_viridis_c(end = 0.8, trans = "log10", breaks = c(1000, 5000, 10000)) +
+  guides(color = guide_legend(), size = guide_legend()) +
+  xlab("fish species") + ylab("vulnerable species") +
+  ft_theme() +
+  ggtitle("Fish and vulnerable species diversity at marine World Heritate sites")
+
+ggsave("output/sites.png", width = 10, height = 6, dpi = 600)
 ```

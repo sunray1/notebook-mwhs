@@ -3,7 +3,8 @@ env.txt
 *.json
 output
 *.Rdata
-shape
-shape.zip
-worms.txt
+data/shape
+data/shape.zip
+data/taxon.txt
+.Rhistory
 
