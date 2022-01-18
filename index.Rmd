@@ -293,3 +293,17 @@ ggplot() +
 
 ggsave("output/sites.png", width = 10, height = 6, dpi = 600)
 ```
+
+### Species lists by site
+
+```{r message=FALSE, warning=FALSE}
+species_lists <- occ %>%
+  group_by(full_name, scientificName, is_fish, category, sequences) %>%
+  summarize() %>%
+  select(site = full_name, scientificName, is_fish, iucn_category = category, bold_sequences = sequences) %>%
+  arrange(site, scientificName) %>%
+  ungroup()
+
+xlsx::write.xlsx(as.data.frame(species_lists), file = "output/species_lists.xlsx", showNA = FALSE, row.names = FALSE)
+xlsx::write.xlsx(as.data.frame(species_lists %>% filter(is_fish)), file = "output/species_lists_fish.xlsx", showNA = FALSE, row.names = FALSE)
+```
