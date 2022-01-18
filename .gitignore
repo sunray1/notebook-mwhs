@@ -1,7 +1,6 @@
 .DS_Store
 env.txt
 *.json
-output
 *.Rdata
 data/shape
 data/shape.zip
