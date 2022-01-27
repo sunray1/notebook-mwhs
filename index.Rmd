@@ -1,5 +1,5 @@
 ---
-title: Diversity of fish, vulnerable species, and species of Outstanding Universal Value in Marine World Heritage Sites
+title: Diversity of fish and vulnerable species in Marine World Heritage Sites based on OBIS data
 date: "`r Sys.Date()`"
 author: Pieter Provoost
 output: (function(...) {
@@ -16,8 +16,8 @@ This notebook explores species diversity in Marine World Heritage Sites using OB
 
 Optionally remove the following cache files before running the notebook:
 
-- `occurrence.Rdata`: occurrences by site
-- `bold.Rdata`: statistics on barcode sequences in BOLD for all fish species
+- `data/occurrence.Rdata`: occurrences by site
+- `data/bold.Rdata`: statistics on barcode sequences in BOLD for all fish species
 
 If necessary, adjust fish taxonomy below:
 
@@ -105,9 +105,9 @@ Let's check BOLD for barcode sequences using all fish species in WoRMS:
 
 ```{r message=FALSE, warning=FALSE}
 # fixes issue with bold package
-invisible(Sys.setlocale("LC_ALL", "C"))
+# invisible(Sys.setlocale("LC_ALL", "C"))
 
-if (!file.exists("bold.Rdata")) {
+if (!file.exists("data/bold.Rdata")) {
   fish_species <- worms %>% pull(scientificName) %>% unique()
   bold_list <- sapply(fish_species, function(x) NULL)
   for (i in 1:length(bold_list)) {
@@ -121,9 +121,9 @@ if (!file.exists("bold.Rdata")) {
       })
     }
   }
-  save(bold_list, file = "bold.Rdata")
+  save(bold_list, file = "data/bold.Rdata")
 } else {
-  load("bold.Rdata")
+  load("data/bold.Rdata")
 }
 
 sequence_numbers <- unlist(map(bold_list, nrow))
@@ -165,9 +165,25 @@ In this section we will look at the diversity of fish and vulnerable species in 
 
 ### Fetch spatial data
 
-First fetch the Marine World Heritage Sites shapefile from MarineRegions:
 
 ```{r message=FALSE, warning=FALSE}
+shapes <- st_read("data/World_Heritage_Sites/World_Heritage_Sites.shp", options = "ENCODING=UTF-8") %>%
+  filter(MARINE != "0") %>%
+  select(full_name = NAME, country = ISO3, geometry)
+```
+
+Let's create a map.
+
+```{r message=FALSE, warning=FALSE}
+mapviewOptions(fgb = FALSE)
+mapview(shapes)@map
+```
+
+### Fetch spatial data **(deprecated)**
+
+First fetch the Marine World Heritage Sites shapefile from MarineRegions:
+
+```{r message=FALSE, warning=FALSE, eval=FALSE}
 if (!file.exists("data/shape/worldheritagemarineprogramme.shp")) {
   download.file("http://geo.vliz.be/geoserver/wfs?request=getfeature&service=wfs&version=1.0.0&typename=MarineRegions:worldheritagemarineprogramme&outputformat=SHAPE-ZIP", "data/shape.zip")
   unzip("data/shape.zip", exdir = "shape")
@@ -176,13 +192,6 @@ if (!file.exists("data/shape/worldheritagemarineprogramme.shp")) {
 shapes <- st_read("data/shape/worldheritagemarineprogramme.shp") %>%
   select(full_name, country, geometry) %>%
   mutate(full_name = iconv(full_name, "latin1", "UTF-8"))
-```
-
-Let's create a map.
-
-```{r message=FALSE, warning=FALSE}
-mapviewOptions(fgb = FALSE)
-mapview(shapes)@map
 ```
 
 ### Process spatial data
@@ -216,15 +225,15 @@ occ_for_geom <- function(geom) {
   return(occ_filtered)
 }
 
-if (!file.exists("occurrence.Rdata")) {
+if (!file.exists("data/occurrence.Rdata")) {
   occs <- map(shapes_processed$geometry, occ_for_geom)
   for (i in 1:nrow(shapes_processed)) {
     occs[[i]]$full_name <- shapes_processed$full_name[i]
   }
   occ <- bind_rows(occs)
-  save(occ, file = "occurrence.Rdata")
+  save(occ, file = "data/occurrence.Rdata")
 } else {
-  load("occurrence.Rdata")
+  load("data/occurrence.Rdata")
 }
 
 occ <- occ %>%
