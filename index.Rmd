@@ -165,7 +165,6 @@ In this section we will look at the diversity of fish and vulnerable species in 
 
 ### Fetch spatial data
 
-
 ```{r message=FALSE, warning=FALSE}
 shapes <- st_read("data/World_Heritage_Sites/World_Heritage_Sites.shp", options = "ENCODING=UTF-8") %>%
   filter(MARINE != "0") %>%
@@ -203,6 +202,7 @@ shapes_processed <- shapes %>%
   mutate(geometry = st_make_valid(sf_remove_holes(geometry))) %>%
   group_by(full_name) %>%
   summarize(geometry = st_union(geometry))
+  #%>% st_set_precision(precision = 10^4)
 
 mapview(shapes, color = "red", lwd = 0.5, alpha = 1, alpha.regions = 0) +
   mapview(shapes_processed, color = "green", lwd = 0.5, alpha = 1, alpha.regions = 0, legend = FALSE)
