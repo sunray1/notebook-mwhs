@@ -313,6 +313,7 @@ species_lists <- occ %>%
   arrange(site, scientificName) %>%
   ungroup()
 
+write.csv(species_lists, file = "output/species_lists.csv", row.names = FALSE, na = "")
 xlsx::write.xlsx(as.data.frame(species_lists), file = "output/species_lists.xlsx", showNA = FALSE, row.names = FALSE)
 xlsx::write.xlsx(as.data.frame(species_lists %>% filter(is_fish)), file = "output/species_lists_fish.xlsx", showNA = FALSE, row.names = FALSE)
 ```

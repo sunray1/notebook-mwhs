@@ -1,0 +1,14 @@
+---
+title: Cross comparison of species lists from literature and OBIS data for Marine World Heritage Sites based on OBIS data
+date: "`r Sys.Date()`"
+author: Pieter Provoost
+output: (function(...) {
+  rmdformats::robobook(toc_depth = 4, pandoc_args = c("+RTS", "-K2000m", "-RTS"), ...) })
+editor_options: 
+  chunk_output_type: console
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = "docs") })  
+---
+
+```{r message=FALSE, warning=FALSE}
+```
