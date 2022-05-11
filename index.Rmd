@@ -165,47 +165,24 @@ In this section we will look at the diversity of fish and vulnerable species in 
 
 ### Fetch spatial data
 
-```{r message=FALSE, warning=FALSE}
-shapes <- st_read("data/World_Heritage_Sites/World_Heritage_Sites.shp", options = "ENCODING=UTF-8") %>%
-  filter(MARINE != "0") %>%
-  select(full_name = NAME, country = ISO3, geometry)
-```
-
-Let's create a map.
+Spatial features for the marine World Heritage sites have been prepared in another repository, see https://github.com/iobis/mwhs-shapes.
 
 ```{r message=FALSE, warning=FALSE}
-mapviewOptions(fgb = FALSE)
-mapview(shapes)@map
-```
-
-### Fetch spatial data **(deprecated)**
-
-First fetch the Marine World Heritage Sites shapefile from MarineRegions:
-
-```{r message=FALSE, warning=FALSE, eval=FALSE}
-if (!file.exists("data/shape/worldheritagemarineprogramme.shp")) {
-  download.file("http://geo.vliz.be/geoserver/wfs?request=getfeature&service=wfs&version=1.0.0&typename=MarineRegions:worldheritagemarineprogramme&outputformat=SHAPE-ZIP", "data/shape.zip")
-  unzip("data/shape.zip", exdir = "shape")
+if (!file.exists("data/marine_world_heritage.gpkg")) {
+  download.file("https://github.com/iobis/mwhs-shapes/blob/master/output/marine_world_heritage.gpkg?raw=true", "data/marine_world_heritage.gpkg")
 }
 
-shapes <- st_read("data/shape/worldheritagemarineprogramme.shp") %>%
-  select(full_name, country, geometry) %>%
-  mutate(full_name = iconv(full_name, "latin1", "UTF-8"))
+shapes <- st_read("data/marine_world_heritage.gpkg")
 ```
 
 ### Process spatial data
 
-Reduce the complexity of the spatial geometries by removing holes, then merge geometries by site.
+For some sites, the GeoPackage has core as well as buffer areas. Merge the geometries by site.
 
 ```{r message=FALSE, warning=FALSE}
 shapes_processed <- shapes %>%
-  mutate(geometry = st_make_valid(sf_remove_holes(geometry))) %>%
-  group_by(full_name) %>%
-  summarize(geometry = st_union(geometry))
-  #%>% st_set_precision(precision = 10^4)
-
-mapview(shapes, color = "red", lwd = 0.5, alpha = 1, alpha.regions = 0) +
-  mapview(shapes_processed, color = "green", lwd = 0.5, alpha = 1, alpha.regions = 0, legend = FALSE)
+  group_by(name) %>%
+  summarize()
 ```
 
 ### Fetch occurrence data
@@ -225,10 +202,12 @@ occ_for_geom <- function(geom) {
   return(occ_filtered)
 }
 
+sf_use_s2(FALSE)
+
 if (!file.exists("data/occurrence.Rdata")) {
-  occs <- map(shapes_processed$geometry, occ_for_geom)
+  occs <- map(shapes_processed$geom, occ_for_geom)
   for (i in 1:nrow(shapes_processed)) {
-    occs[[i]]$full_name <- shapes_processed$full_name[i]
+    occs[[i]]$name <- shapes_processed$name[i]
   }
   occ <- bind_rows(occs)
   save(occ, file = "data/occurrence.Rdata")
@@ -263,7 +242,7 @@ occ %>%
 
 ```{r message=FALSE, warning=FALSE}
 site_stats <- occ %>%
-  group_by(full_name) %>%
+  group_by(name) %>%
   summarize(
     records = n(),
     species = length(unique(aphiaID)),
@@ -281,15 +260,15 @@ site_stats %>%
 
 ```{r message=FALSE, warning=FALSE}
 subset <- site_stats %>%
-  filter(full_name %in% c("Great Barrier Reef", "Belize Barrier Reef Reserve System", "Ha Long Bay", "The Wadden Sea", "Heard and McDonald Islands", "Aldabra Atoll")) %>%
-  arrange(full_name)
+  filter(name %in% c("Great Barrier Reef", "Belize Barrier Reef Reserve System", "Ha Long Bay", "The Wadden Sea", "Heard and McDonald Islands", "Aldabra Atoll")) %>%
+  arrange(name)
 
 subset$x <- c(600, 100, 800, 500, 10, 60)
 subset$y <- c(140, 80, 210, 3, 20, 40)
 
 ggplot() +
   geom_segment(subset, mapping = aes(x = x, y = y, xend = fish, yend = vulnerable)) +
-  geom_label(subset, mapping = aes(x = x, y = y, label = full_name), size = 3.5, label.size = 0) +
+  geom_label(subset, mapping = aes(x = x, y = y, label = name), size = 3.5, label.size = 0) +
   geom_point(site_stats, mapping = aes(x = fish, y = vulnerable, size = species, color = species), shape = 21, stroke = 1.2, fill = "white") +
   scale_x_continuous(trans = "log10") +
   scale_y_continuous(trans = "log10") +
@@ -307,9 +286,9 @@ ggsave("output/sites.png", width = 10, height = 6, dpi = 600)
 
 ```{r message=FALSE, warning=FALSE}
 species_lists <- occ %>%
-  group_by(full_name, scientificName, is_fish, category, sequences) %>%
+  group_by(name, scientificName, is_fish, category, sequences) %>%
   summarize() %>%
-  select(site = full_name, scientificName, is_fish, iucn_category = category, bold_sequences = sequences) %>%
+  select(site = name, scientificName, is_fish, iucn_category = category, bold_sequences = sequences) %>%
   arrange(site, scientificName) %>%
   ungroup()
 
