@@ -7,4 +7,5 @@ data/shape.zip
 data/taxon.txt
 .Rhistory
 marine_world_heritage.gpkg
-
+*.Rproj
+.Rproj.user

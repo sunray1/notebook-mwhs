@@ -19,11 +19,13 @@ Optionally remove the following cache files before running the notebook:
 - `data/occurrence.Rdata`: occurrences by site
 - `data/bold.Rdata`: statistics on barcode sequences in BOLD for all fish species
 
-If necessary, adjust fish taxonomy below:
+If necessary, adjust fish and coral taxonomy below:
 
 ```{r message=FALSE, warning=FALSE}
-fish_classes <- c("Actinopteri", "Cephalaspidomorphi", "Myxini", "Petromyzonti", "Elasmobranchii", "Holocephali", "Coelacanthi")
+fish_classes <- c("Actinopteri", "Cephalaspidomorphi", "Myxini", "Petromyzonti", "Elasmobranchii", "Holocephali", "Coelacanthi", "Chondrostei", "Teleostei")
 fish_orders <- c("Cetomimiformes", "Gasterosteiformes", "Scorpaeniformes", "Stephanoberyciformes")
+coral_classes <- c("Anthozoa")
+not_coral_orders <- c("Penicillaria", "Spirularia", "Actiniaria")
 ```
 
 ## Other resources
@@ -57,10 +59,12 @@ First read all accepted WoRMS species. As it's not possible to get a full specie
 worms <- read.csv("data/taxon.txt", sep = "\t", quote = "") %>%
   as_tibble() %>%
   filter(taxonRank == "Species" & taxonomicStatus == "accepted") %>%
-  select(taxonID, scientificName, phylum, class, order) %>%
+  select(taxonID, scientificName, kingdom, phylum, class, order, family, genus) %>%
   distinct() %>%
   mutate(is_fish = class %in% fish_classes | order %in% fish_orders) %>%
-  mutate(aphiaID = as.integer(str_replace(taxonID, "urn:lsid:marinespecies.org:taxname:", "")))
+  mutate(is_coral = class %in% coral_classes & !(order %in% not_coral_orders)) %>%
+  mutate(aphiaID = as.integer(str_replace(taxonID, "urn:lsid:marinespecies.org:taxname:", ""))) %>%
+  mutate_all(~na_if(., ""))
 ```
 
 ### Assign Red List categories
@@ -99,7 +103,14 @@ worms <- worms %>%
   left_join(redlist %>% select(scientific_name, category), by = c("scientificName" = "scientific_name"))
 ```
 
-### Get BOLD barcode statistics for all fish species
+### Export WoRMS list
+
+```{r message=FALSE, warning=FALSE}
+openxlsx::write.xlsx(worms, "output/worms_species.xlsx", rowNames = FALSE)
+write.csv(worms, "output/worms_species.csv", row.names = FALSE)
+```
+
+### Get BOLD barcode statistics for all fish species (SLOW)
 
 Let's check BOLD for barcode sequences using all fish species in WoRMS:
 
@@ -108,7 +119,7 @@ Let's check BOLD for barcode sequences using all fish species in WoRMS:
 # invisible(Sys.setlocale("LC_ALL", "C"))
 
 if (!file.exists("data/bold.Rdata")) {
-  fish_species <- worms %>% pull(scientificName) %>% unique()
+  fish_species <- worms %>% filter(is_fish) %>% pull(scientificName) %>% unique()
   bold_list <- sapply(fish_species, function(x) NULL)
   for (i in 1:length(bold_list)) {
     message(i, " ", names(bold_list)[i])
@@ -216,7 +227,7 @@ if (!file.exists("data/occurrence.Rdata")) {
 }
 
 occ <- occ %>%
-  inner_join(worms %>% select(is_fish, aphiaID, category, sequences), by = "aphiaID") %>%
+  inner_join(worms %>% select(phylum, class, order, family, genus, is_fish, is_coral, aphiaID, category, sequences), by = "aphiaID") %>%
   mutate(
     aphia_fish = ifelse(is_fish == TRUE, aphiaID, NA),
     aphia_vulnerable = ifelse(!is.na(category), aphiaID, NA),
@@ -286,10 +297,10 @@ ggsave("output/sites.png", width = 10, height = 6, dpi = 600)
 
 ```{r message=FALSE, warning=FALSE}
 species_lists <- occ %>%
-  group_by(name, scientificName, is_fish, category, sequences) %>%
+  group_by(name, scientificName, phylum, class, order, family, genus, is_fish, is_coral, category, sequences) %>%
   summarize() %>%
-  select(site = name, scientificName, is_fish, iucn_category = category, bold_sequences = sequences) %>%
-  arrange(site, scientificName) %>%
+  select(site = name, scientificName, phylum, class, order, family, genus, is_fish, is_coral, iucn_category = category, bold_sequences = sequences) %>%
+  arrange(site, phylum, class, order, family, scientificName) %>%
   ungroup()
 
 write.csv(species_lists, file = "output/species_lists.csv", row.names = FALSE, na = "")
