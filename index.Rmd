@@ -297,9 +297,9 @@ ggsave("output/sites.png", width = 10, height = 6, dpi = 600)
 
 ```{r message=FALSE, warning=FALSE}
 species_lists <- occ %>%
-  group_by(name, scientificName, phylum, class, order, family, genus, is_fish, is_coral, category, sequences) %>%
+  group_by(name, scientificName, aphiaID, phylum, class, order, family, genus, is_fish, is_coral, category, sequences) %>%
   summarize() %>%
-  select(site = name, scientificName, phylum, class, order, family, genus, is_fish, is_coral, iucn_category = category, bold_sequences = sequences) %>%
+  select(site = name, scientificName, aphiaID, phylum, class, order, family, genus, is_fish, is_coral, iucn_category = category, bold_sequences = sequences) %>%
   arrange(site, phylum, class, order, family, scientificName) %>%
   ungroup()
 

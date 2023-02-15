@@ -7,7 +7,7 @@
 
         <meta name="author" content="Pieter Provoost" />
     
-        <meta name="date" content="2023-02-10" />
+        <meta name="date" content="2023-02-15" />
     
     <title>Diversity of fish and vulnerable species in Marine World Heritage Sites based on OBIS data</title>
 
@@ -1545,7 +1545,7 @@ Marine World Heritage Sites based on OBIS data</li>
           <li class="divider"></li>
                                 <li><span><i class="glyphicon glyphicon-user"></i> Pieter
 Provoost</span></li>
-                                         <li><span><i class="glyphicon glyphicon-calendar"></i> 2023-02-10</span></li>
+                                         <li><span><i class="glyphicon glyphicon-calendar"></i> 2023-02-15</span></li>
                   </ul>     
       </div>
       <div class="book-body fixed">
@@ -2342,9 +2342,9 @@ Nærøyfjord</td>
 <div id="species-lists-by-site" class="section level3">
 <h3>Species lists by site</h3>
 <div class="sourceCode" id="cb18"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb18-1"><a href="#cb18-1" tabindex="-1"></a>species_lists <span class="ot">&lt;-</span> occ <span class="sc">%&gt;%</span></span>
-<span id="cb18-2"><a href="#cb18-2" tabindex="-1"></a>  <span class="fu">group_by</span>(name, scientificName, phylum, class, order, family, genus, is_fish, is_coral, category, sequences) <span class="sc">%&gt;%</span></span>
+<span id="cb18-2"><a href="#cb18-2" tabindex="-1"></a>  <span class="fu">group_by</span>(name, scientificName, aphiaID, phylum, class, order, family, genus, is_fish, is_coral, category, sequences) <span class="sc">%&gt;%</span></span>
 <span id="cb18-3"><a href="#cb18-3" tabindex="-1"></a>  <span class="fu">summarize</span>() <span class="sc">%&gt;%</span></span>
-<span id="cb18-4"><a href="#cb18-4" tabindex="-1"></a>  <span class="fu">select</span>(<span class="at">site =</span> name, scientificName, phylum, class, order, family, genus, is_fish, is_coral, <span class="at">iucn_category =</span> category, <span class="at">bold_sequences =</span> sequences) <span class="sc">%&gt;%</span></span>
+<span id="cb18-4"><a href="#cb18-4" tabindex="-1"></a>  <span class="fu">select</span>(<span class="at">site =</span> name, scientificName, aphiaID, phylum, class, order, family, genus, is_fish, is_coral, <span class="at">iucn_category =</span> category, <span class="at">bold_sequences =</span> sequences) <span class="sc">%&gt;%</span></span>
 <span id="cb18-5"><a href="#cb18-5" tabindex="-1"></a>  <span class="fu">arrange</span>(site, phylum, class, order, family, scientificName) <span class="sc">%&gt;%</span></span>
 <span id="cb18-6"><a href="#cb18-6" tabindex="-1"></a>  <span class="fu">ungroup</span>()</span>
 <span id="cb18-7"><a href="#cb18-7" tabindex="-1"></a></span>
