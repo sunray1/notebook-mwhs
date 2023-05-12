@@ -1,0 +1,113 @@
+---
+title: Taxon IDs by World Heritage site
+date: "`r Sys.Date()`"
+author: Pieter Provoost
+output: (function(...) {
+  rmdformats::robobook(toc_depth = 4, pandoc_args = c("+RTS", "-K2000m", "-RTS"), ...) })
+editor_options: 
+  chunk_output_type: console
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = "docs") })  
+---
+
+This simplified notebook generates lists of Aphia IDs by World Heritage site.
+
+## How to use this notebook
+
+Optionally remove the following cache files before running the notebook:
+
+- `data/occurrence.Rdata`: occurrences by site
+
+## Dependencies
+
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+library(sf)
+library(purrr)
+library(robis)
+```
+
+## Fetch spatial data
+
+Spatial features for the marine World Heritage sites have been prepared in another repository, see https://github.com/iobis/mwhs-shapes.
+
+```{r message=FALSE, warning=FALSE}
+if (!file.exists("data/marine_world_heritage.gpkg")) {
+  download.file("https://github.com/iobis/mwhs-shapes/blob/master/output/marine_world_heritage.gpkg?raw=true", "data/marine_world_heritage.gpkg")
+}
+
+shapes <- st_read("data/marine_world_heritage.gpkg")
+```
+
+## Process spatial data
+
+For some sites, the GeoPackage has core as well as buffer areas. Merge the geometries by site.
+
+```{r message=FALSE, warning=FALSE}
+shapes_processed <- shapes %>%
+  group_by(name) %>%
+  summarize()
+```
+
+## Fetch occurrence data
+
+Now retrieve data from OBIS by area. OBIS is queried by bounding box, but a point-in-polygon calculation is used to discard points outside the areas.
+
+```{r message=FALSE, warning=FALSE}
+occ_for_geom <- function(geom) {
+  wkt <- st_as_text(st_as_sfc(st_bbox(geom)), digits = 6)
+  message(wkt)
+  occ <- occurrence(geometry = wkt, fields = c("decimalLongitude", "decimalLatitude", "date_year", "scientificName", "aphiaID", "dataset_id")) %>%
+    st_as_sf(coords = c("decimalLongitude", "decimalLatitude"), crs = 4326)
+  occ_filtered <- occ %>%
+    filter(st_intersects(geometry, geom, sparse = FALSE)) %>%
+    as_tibble() %>%
+    select(-geometry)
+  return(occ_filtered)
+}
+
+sf_use_s2(FALSE)
+
+if (!file.exists("data/occurrence.Rdata")) {
+  occs <- map(shapes_processed$geom, occ_for_geom)
+  for (i in 1:nrow(shapes_processed)) {
+    occs[[i]]$name <- shapes_processed$name[i]
+  }
+  occ <- bind_rows(occs)
+  save(occ, file = "data/occurrence.Rdata")
+} else {
+  load("data/occurrence.Rdata")
+}
+```
+
+## Calculate statistics
+
+```{r message=FALSE, warning=FALSE}
+occ %>%
+  summarize(
+    records = n(),
+    taxa = length(unique(aphiaID))
+  )
+```
+
+```{r message=FALSE, warning=FALSE}
+occ %>%
+  group_by(name) %>%
+  summarize(
+    records = n(),
+    taxa = length(unique(aphiaID))
+  )
+```
+
+### Taxon lists by site
+
+```{r message=FALSE, warning=FALSE}
+taxon_lists <- occ %>%
+  group_by(name, aphiaID) %>%
+  summarize() %>%
+  select(site = name, aphiaID) %>%
+  arrange(site, aphiaID) %>%
+  ungroup()
+
+write.csv(taxon_lists, file = "output/taxon_lists.csv", row.names = FALSE, na = "")
+```
