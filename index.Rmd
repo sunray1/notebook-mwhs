@@ -1,7 +1,7 @@
 ---
 title: Diversity of fish and vulnerable species in Marine World Heritage Sites based on OBIS data
 date: "`r Sys.Date()`"
-author: Pieter Provoost
+author: Pieter Provoost (edited by Chandra Earl)
 output: (function(...) {
   rmdformats::robobook(toc_depth = 4, pandoc_args = c("+RTS", "-K2000m", "-RTS"), ...) })
 editor_options: 
@@ -26,6 +26,8 @@ fish_classes <- c("Actinopteri", "Cephalaspidomorphi", "Myxini", "Petromyzonti",
 fish_orders <- c("Cetomimiformes", "Gasterosteiformes", "Scorpaeniformes", "Stephanoberyciformes")
 coral_classes <- c("Anthozoa")
 not_coral_orders <- c("Penicillaria", "Spirularia", "Actiniaria")
+
+fish_taxa_in_GBIF <- c("Coelacanthi","Dipneusti","Elasmobranchii","Holocephali","Myxini","Petromyzonti","Perciformes","Cypriniformes","Salmoniformes","Clupeiformes","Scorpaeniformes","Gadiformes","Pleuronectiformes","Anguilliformes","Tetraodontiformes","Siluriformes","Characiformes","Esociformes","Osmeriformes","Cyprinodontiformes","Gasterosteiformes","Atheriniformes","Beryciformes","Myctophiformes","Syngnathiformes","Aulopiformes","Mugiliformes","Beloniformes","Stomiiformes","Lophiiformes","Lepisosteiformes","Elopiformes","Ophidiiformes","Copelata","Zeiformes","Batrachoidiformes","Gymnotiformes","Osteoglossiformes","Percopsiformes","Gobiesociformes","Albuliformes","Stephanoberyciformes","Acipenseriformes","Amiiformes","Synbranchiformes","Notacanthiformes","Lampriformes","Gonorynchiformes","Saccopharyngiformes","Polypteriformes","Polymixiiformes","Cetomimiformes","Ateleopodiformes")
 ```
 
 ## Other resources
@@ -49,6 +51,8 @@ library(robis)
 library(stringr)
 library(ftplottools)
 library(ggrepel)
+library(rgbif)
+library(worrms)
 ```
 
 ## Compiling a list of all WoRMS species including IUCN Red List category and BOLD barcode statistics
@@ -176,7 +180,7 @@ In this section we will look at the diversity of fish and vulnerable species in 
 
 ### Fetch spatial data
 
-Spatial features for the marine World Heritage sites have been prepared in another repository, see https://github.com/iobis/mwhs-shapes.
+Spatial features for the marine World Heritage sites have been prepared in another repository, see <https://github.com/iobis/mwhs-shapes>.
 
 ```{r message=FALSE, warning=FALSE}
 if (!file.exists("data/marine_world_heritage.gpkg")) {
@@ -197,6 +201,8 @@ shapes_processed <- shapes %>%
 ```
 
 ### Fetch occurrence data
+
+#### OBIS
 
 Now retrieve data from OBIS by area. OBIS is queried by bounding box, but a point-in-polygon calculation is used to discard points outside the areas.
 
@@ -224,6 +230,71 @@ if (!file.exists("data/occurrence.Rdata")) {
   save(occ, file = "data/occurrence.Rdata")
 } else {
   load("data/occurrence.Rdata")
+}
+
+occ <- occ %>%
+  inner_join(worms %>% select(phylum, class, order, family, genus, is_fish, is_coral, aphiaID, category, sequences), by = "aphiaID") %>%
+  mutate(
+    aphia_fish = ifelse(is_fish == TRUE, aphiaID, NA),
+    aphia_vulnerable = ifelse(!is.na(category), aphiaID, NA),
+    aphia_vulnerable_fish = ifelse(is_fish == TRUE & !is.na(category), aphiaID, NA),
+    aphia_barcode_fish = ifelse(is_fish == TRUE & sequences > 0, aphiaID, NA),
+  ) 
+```
+
+#### GBIF
+
+Now retrieve data from GBIF by area. GBIF is queried by bounding box, but a point-in-polygon calculation is used to discard points outside the areas. Since GBIF contains data other than marine occurrences, only fish are searched for here. AphiaIDs are also queried and recorded.
+
+```{r message=FALSE, warning=FALSE}
+occ_for_geom <- function(geom) {
+  wkt <- st_as_text(st_as_sfc(st_bbox(geom)), digits = 6)
+  message(wkt)
+  occ_all <- NULL
+  for (fishtaxa in fish_taxa_in_GBIF){
+    #just get 10 first to check the number of records and to see if there is data
+    occ_subset <- occ_data(geometry = wkt, scientificName = fishtaxa, limit = 10, start = 0)
+    #if there is data
+    if (!is.null(occ_subset$data)){
+      #if there are more than 100000
+      if (occ_subset$meta$count > 100000){
+        #queries returning more than 100000 do not work since they are not allowed by GBIF
+        message(fishtaxa)
+        message(occ_subset$meta$count)
+      } else {
+        occ_subset <- occ_data(geometry = wkt, scientificName = fishtaxa, limit = 100000, start = 0)
+        #filter columns
+        occ_headers_filtered <- select(occ_subset$data, any_of(c("scientificName", "decimalLatitude", "decimalLongitude", "locality", "occurrenceID", "key", "year")))
+        #add this fish taxa to the whole dataset
+        occ_geog <- st_as_sf(occ_headers_filtered, coords = c("decimalLongitude", "decimalLatitude"), crs = 4326)
+        occ_filtered <- occ_geog %>%
+            filter(st_intersects(geometry, geom, sparse = FALSE)) %>%
+            as_tibble()
+        occ_all <- bind_rows(occ_all, occ_filtered)
+      }
+    }
+  }  
+  return(occ_all)
+}
+
+sf_use_s2(FALSE)
+
+if (!file.exists("data/GBIF_occurrence.Rdata")) {
+  occs <- map(shapes_processed$geom, occ_for_geom)
+  for (i in 1:nrow(shapes_processed)) {
+    occs[[i]]$name <- shapes_processed$name[i]
+  }
+  occ <- bind_rows(occs)
+  unique_sci_names <- name_parse(unique(occ$scientificName))[c("scientificname", "canonicalname")]
+
+  names <- wm_name2id_(unique_sci_names$canonicalname)
+  matching_names <- unique_sci_names$canonicalname %in% names(names)
+  unique_sci_names$aphiaID[matching_names] <- names[unique_sci_names$canonicalname[matching_names]]
+  occ <- merge(occ, unique_sci_names, by.x="scientificName", by.y="scientificname")
+  
+  save(occ, file = "data/GBIF_occurrence.Rdata")
+} else {
+  load("data/GBIF_occurrence.Rdata")
 }
 
 occ <- occ %>%
