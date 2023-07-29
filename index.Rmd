@@ -10,7 +10,7 @@ knit: (function(inputFile, encoding) {
   rmarkdown::render(inputFile, encoding = encoding, output_dir = "docs") })  
 ---
 
-This notebook explores species diversity in Marine World Heritage Sites using OBIS data. This is work in progress.
+This notebook explores species diversity in Marine World Heritage Sites using OBIS and GBIF data. This is work in progress.
 
 ## How to use this notebook
 
